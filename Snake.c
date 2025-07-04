@@ -1,89 +1,87 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>  // For usleep
-#include <termios.h> // For terminal input handling
-#include <fcntl.h>   // For non-blocking input
-#include <time.h>    // For random number generation
-#include <ctype.h>   // For tolower function
-#include <string.h>  // For string handling
+#include <unistd.h>
+#include <termios.h>
+#include <fcntl.h>
+#include <time.h>
+#include <ctype.h>
+#include <string.h>
 
-#define WIDTH 30
-#define HEIGHT 30
-#define INITIAL_SPEED 200000
-#define SCORE_FILE "scores.txt"
+#define W 30
+#define H 30
+#define SPD 200000
+#define SCORES_FILE "scores.txt"
 
-// Directions
 enum
 {
-    UP,
-    DOWN,
-    LEFT,
-    RIGHT
+    U,
+    D,
+    L,
+    R
 };
 
 typedef struct
 {
     int x, y;
-} Position;
+} Pos;
 
 typedef struct
 {
-    char name[50];
-    int score;
-} PlayerScore;
+    char n[50];
+    int s;
+} Score;
 
-PlayerScore playerScores[100];
-int playerCount = 0;
+Score scores[100];
+int numPlayers = 0;
 
-Position snake[900]; // Max length of the snake
-int snakeLength;
-Position food;
-int direction;
-int score;
-int speed; // Speed of the game
-char playerName[50];
+Pos snake[900];
+int len;
+Pos food;
+int dir;
+int pts;
+int spd;
+char name[50];
 
-// Function prototypes
-void updateScoreFile();
+void saveScores();
 void loadScores();
-void drawGrid();
-void initializeGame();
+void draw();
+void init();
 int isSnake(int x, int y);
-void updateSnakeBody();
-void updateSnakeHead();
-void checkCollisions();
-void increaseSpeed();
-void moveSnake();
-void changeDirection(char key);
-void setNonBlockingInput();
-int kbhit();
-char getch();
+void moveBody();
+void moveHead();
+void check();
+void faster();
+void move();
+void changeDir(char k);
+void setInput();
+int keyPressed();
+char getKey();
 
-void setNonBlockingInput()
+void setInput()
 {
     struct termios t;
     tcgetattr(STDIN_FILENO, &t);
-    t.c_lflag &= ~ICANON; // Disable canonical mode
-    t.c_lflag &= ~ECHO;   // Disable echo
+    t.c_lflag &= ~ICANON;
+    t.c_lflag &= ~ECHO;
     tcsetattr(STDIN_FILENO, TCSANOW, &t);
 }
 
-int kbhit()
+int keyPressed()
 {
-    struct termios oldt, newt;
+    struct termios old, new;
     int ch;
     int oldf;
 
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    tcgetattr(STDIN_FILENO, &old);
+    new = old;
+    new.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &new);
     oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
 
     ch = getchar();
 
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    tcsetattr(STDIN_FILENO, TCSANOW, &old);
     fcntl(STDIN_FILENO, F_SETFL, oldf);
 
     if (ch != EOF)
@@ -91,85 +89,76 @@ int kbhit()
         ungetc(ch, stdin);
         return 1;
     }
-
     return 0;
 }
 
-char getch()
-{
-    return getchar();
-}
+char getKey() { return getchar(); }
 
 void loadScores()
 {
-    FILE *file = fopen(SCORE_FILE, "r");
-    if (file == NULL)
+    FILE *file = fopen(SCORES_FILE, "r");
+    if (!file)
         return;
 
-    playerCount = 0;
-    while (fscanf(file, "%s %d", playerScores[playerCount].name, &playerScores[playerCount].score) != EOF)
+    numPlayers = 0;
+    while (fscanf(file, "%s %d", scores[numPlayers].n, &scores[numPlayers].s) != EOF)
     {
-        playerCount++;
+        numPlayers++;
     }
-
     fclose(file);
 }
 
-void updateScoreFile()
+void saveScores()
 {
     int found = 0;
 
-    // Update score if player exists
-    for (int i = 0; i < playerCount; i++)
+    for (int i = 0; i < numPlayers; i++)
     {
-        if (strcmp(playerScores[i].name, playerName) == 0)
+        if (strcmp(scores[i].n, name) == 0)
         {
-            if (score > playerScores[i].score)
+            if (pts > scores[i].s)
             {
-                playerScores[i].score = score; // Update only if the score is higher
+                scores[i].s = pts;
             }
             found = 1;
             break;
         }
     }
 
-    // Add new player if not found
     if (!found)
     {
-        strcpy(playerScores[playerCount].name, playerName);
-        playerScores[playerCount].score = score;
-        playerCount++;
+        strcpy(scores[numPlayers].n, name);
+        scores[numPlayers].s = pts;
+        numPlayers++;
     }
 
-    // Save updated scores
-    FILE *file = fopen(SCORE_FILE, "w");
-    for (int i = 0; i < playerCount; i++)
+    FILE *file = fopen(SCORES_FILE, "w");
+    for (int i = 0; i < numPlayers; i++)
     {
-        fprintf(file, "%s %d\n", playerScores[i].name, playerScores[i].score);
+        fprintf(file, "%s %d\n", scores[i].n, scores[i].s);
     }
-
     fclose(file);
 }
 
-void initializeGame()
+void init()
 {
-    snakeLength = 1;
-    snake[0].x = WIDTH / 2;
-    snake[0].y = HEIGHT / 2;
-    direction = RIGHT;
-    score = 0;
-    speed = INITIAL_SPEED; // Start with the initial speed
+    len = 1;
+    snake[0].x = W / 2;
+    snake[0].y = H / 2;
+    dir = R;
+    pts = 0;
+    spd = SPD;
 
     srand(time(0));
-    food.x = rand() % WIDTH;
-    food.y = rand() % HEIGHT;
+    food.x = rand() % W;
+    food.y = rand() % H;
 
     loadScores();
 }
 
 int isSnake(int x, int y)
 {
-    for (int i = 0; i < snakeLength; i++)
+    for (int i = 0; i < len; i++)
     {
         if (snake[i].x == x && snake[i].y == y)
             return 1;
@@ -177,163 +166,157 @@ int isSnake(int x, int y)
     return 0;
 }
 
-void drawGrid()
+void draw()
 {
     system("clear");
-    printf("Player: %s | Score: %d\n", playerName, score);
+    printf("Player: %s | Score: %d\n", name, pts);
 
-    int maxScore = 0;
-    char maxPlayer[50];
-    for (int i = 0; i < playerCount; i++)
+    int max = 0;
+    char top[50];
+    for (int i = 0; i < numPlayers; i++)
     {
-        if (playerScores[i].score > maxScore)
+        if (scores[i].s > max)
         {
-            maxScore = playerScores[i].score;
-            strcpy(maxPlayer, playerScores[i].name);
+            max = scores[i].s;
+            strcpy(top, scores[i].n);
         }
     }
-    printf("Highest Score: %s (%d)\n", maxPlayer, maxScore);
+    printf("Highest: %s (%d)\n", top, max);
 
-    for (int i = 0; i < HEIGHT; i++)
+    for (int i = 0; i < H; i++)
     {
-        for (int j = 0; j < WIDTH; j++)
+        for (int j = 0; j < W; j++)
         {
             if (isSnake(j, i))
-            {
                 printf("O ");
-            }
             else if (food.x == j && food.y == i)
-            {
                 printf("F ");
-            }
             else
-            {
                 printf(". ");
-            }
         }
         printf("\n");
     }
 }
 
-void updateSnakeBody()
+void moveBody()
 {
-    for (int i = snakeLength - 1; i > 0; i--)
+    for (int i = len - 1; i > 0; i--)
     {
         snake[i] = snake[i - 1];
     }
 }
 
-void updateSnakeHead()
+void moveHead()
 {
-    switch (direction)
+    switch (dir)
     {
-    case UP:
+    case U:
         snake[0].y--;
         break;
-    case DOWN:
+    case D:
         snake[0].y++;
         break;
-    case LEFT:
+    case L:
         snake[0].x--;
         break;
-    case RIGHT:
+    case R:
         snake[0].x++;
         break;
     }
 }
 
-void checkCollisions()
+void check()
 {
-    if (snake[0].x < 0 || snake[0].x >= WIDTH || snake[0].y < 0 || snake[0].y >= HEIGHT)
+    if (snake[0].x < 0 || snake[0].x >= W || snake[0].y < 0 || snake[0].y >= H)
     {
-        printf("Game Over! Final Score: %d\n", score);
-        updateScoreFile();
+        printf("Game Over! Score: %d\n", pts);
+        saveScores();
         exit(0);
     }
 
-    for (int i = 1; i < snakeLength; i++)
+    for (int i = 1; i < len; i++)
     {
         if (snake[0].x == snake[i].x && snake[0].y == snake[i].y)
         {
-            printf("Game Over! Final Score: %d\n", score);
-            updateScoreFile();
+            printf("Game Over! Score: %d\n", pts);
+            saveScores();
             exit(0);
         }
     }
 }
 
-void increaseSpeed()
+void faster()
 {
-    if (snakeLength % 5 == 0)
+    if (len % 5 == 0)
     {
-        speed = speed > 50000 ? speed - 2000 : speed;
+        spd = spd > 50000 ? spd - 2000 : spd;
     }
 }
 
-void moveSnake()
+void move()
 {
-    updateSnakeBody();
-    updateSnakeHead();
-    checkCollisions();
+    moveBody();
+    moveHead();
+    check();
 
     if (snake[0].x == food.x && snake[0].y == food.y)
     {
-        snakeLength++;
-        score++;
-        food.x = rand() % WIDTH;
-        food.y = rand() % HEIGHT;
-        increaseSpeed();
+        len++;
+        pts++;
+        food.x = rand() % W;
+        food.y = rand() % H;
+        faster();
     }
 }
 
-void changeDirection(char key)
+void changeDir(char k)
 {
-    if (key == 27)
+    if (k == 27)
     {
-        char secondKey = getchar();
-        if (secondKey == 91)
+        char k2 = getKey();
+        if (k2 == 91)
         {
-            char arrowKey = getchar();
-            switch (arrowKey)
+            char k3 = getKey();
+            switch (k3)
             {
             case 'A':
-                if (direction != DOWN)
-                    direction = UP;
+                if (dir != D)
+                    dir = U;
                 break;
             case 'B':
-                if (direction != UP)
-                    direction = DOWN;
+                if (dir != U)
+                    dir = D;
                 break;
             case 'C':
-                if (direction != LEFT)
-                    direction = RIGHT;
+                if (dir != L)
+                    dir = R;
                 break;
             case 'D':
-                if (direction != RIGHT)
-                    direction = LEFT;
+                if (dir != R)
+                    dir = L;
                 break;
             }
         }
     }
     else
     {
-        switch (tolower(key))
+        switch (tolower(k))
         {
         case 'w':
-            if (direction != DOWN)
-                direction = UP;
+            if (dir != D)
+                dir = U;
             break;
         case 's':
-            if (direction != UP)
-                direction = DOWN;
+            if (dir != U)
+                dir = D;
             break;
         case 'a':
-            if (direction != RIGHT)
-                direction = LEFT;
+            if (dir != R)
+                dir = L;
             break;
         case 'd':
-            if (direction != LEFT)
-                direction = RIGHT;
+            if (dir != L)
+                dir = R;
             break;
         }
     }
@@ -341,66 +324,64 @@ void changeDirection(char key)
 
 int main()
 {
-    setNonBlockingInput();
-    initializeGame();
+    setInput();
+    init();
 
-    int isNameValid;
-
+    int valid;
     do
     {
-        isNameValid = 1;
-        printf("Enter your name:\n");
-        scanf("%s", playerName);
+        valid = 1;
+        printf("Enter name:\n");
+        scanf("%s", name);
 
-        for (int i = 0; i < playerCount; i++)
+        for (int i = 0; i < numPlayers; i++)
         {
-            if (strcmp(playerScores[i].name, playerName) == 0)
+            if (strcmp(scores[i].n, name) == 0)
             {
-                printf("Name '%s' already exists.\nDo you want to use this name? (y/n):\n", playerName);
-                char choice;
-                scanf(" %c", &choice);
+                printf("Name '%s' exists.\nUse it? (y/n):\n", name);
+                char c;
+                scanf(" %c", &c);
 
-                if (tolower(choice) == 'y')
+                if (tolower(c) == 'y')
                 {
-                    printf("Welcome back, %s!\n", playerName);
-                    isNameValid = 1;
+                    printf("Welcome back, %s!\n", name);
+                    valid = 1;
                 }
                 else
                 {
-                    printf("Please enter a different name.\n");
-                    isNameValid = 0;
+                    printf("Enter new name.\n");
+                    valid = 0;
                 }
                 break;
             }
         }
-    } while (!isNameValid);
+    } while (!valid);
 
-    printf("Welcome, %s!\n", playerName);
-    printf("Press any key to start the game...\n");
-    while (!kbhit())
+    printf("Start game...\n");
+    while (!keyPressed())
         ;
-    getch();
+    getKey();
 
     while (1)
     {
-        drawGrid();
-        if (kbhit())
+        draw();
+        if (keyPressed())
         {
-            char key = getch();
-            if (key == 'p')
+            char k = getKey();
+            if (k == 'p')
             {
-                printf("Game Paused. Press any key to continue...\n");
-                while (!kbhit())
+                printf("Paused. Press key...\n");
+                while (!keyPressed())
                     ;
-                getch();
+                getKey();
             }
             else
             {
-                changeDirection(key);
+                changeDir(k);
             }
         }
-        moveSnake();
-        usleep(speed);
+        move();
+        usleep(spd);
     }
 
     return 0;
